@@ -3,7 +3,7 @@
 Project:        Northwind Data Warehouse
 Layer:          DDS - Sales Data Mart
 Object Name:    sale.usp_load_dim_northwind
-Author:         Reza Afkhamnia
+Author:         Khatereh Shafaat
 Description:    Loads and transforms Northwind Stage data into Sales Dimensions.
 
 Target Dimensions:
