@@ -3,6 +3,7 @@
 Project:        Northwind Data Warehouse
 Layer:          Data Delivery Store (DDS) - Sales Data Mart
 File Name:      05-Create_Sale_DDS_Tables.sql
+Author:         Khatereh Shafaat
 Description:    Creates Dimension and Fact tables for the Northwind Sales Data Mart.
 
 Architecture:
@@ -23,6 +24,11 @@ Date Mapping:
 - Northwind dates are Gregorian.
 - Fact date keys are retrieved using:
   DimDate.MiladiDate -> DimDate.MiladiDateKey
+
+Geography:
+- Geography is implemented as a shared dimension.
+- Customer, Employee, Supplier, and Order Fact reference Geography
+  through geography_key.
 
 Unknown Members:
 - All Dimensions include an Unknown Member with surrogate key = 0.
@@ -48,11 +54,16 @@ GO
 
 
 -----------------------------------------------------------------------------------------
--- 2. Create Sale Schema
+-- 2. Use DDS Database
 -----------------------------------------------------------------------------------------
 
 USE dds;
 GO
+
+
+-----------------------------------------------------------------------------------------
+-- 3. Create Sale Schema
+-----------------------------------------------------------------------------------------
 
 IF NOT EXISTS
 (
@@ -67,545 +78,511 @@ GO
 
 
 -----------------------------------------------------------------------------------------
--- 3. Create Customer Dimension
+-- 4. Drop Existing DDS Tables
+--
+-- Drop order follows the Foreign Key dependency hierarchy.
+-- This section is intended for development/rebuild purposes.
 -----------------------------------------------------------------------------------------
 
-IF OBJECT_ID(N'sale.dim_customer', N'U') IS NULL
-BEGIN
-    CREATE TABLE sale.dim_customer
-    (
-        customer_key        INT IDENTITY(1,1) NOT NULL,
-        customer_id         VARCHAR(20)       NOT NULL,
-        company_name        NVARCHAR(255)     NOT NULL,
-        contact_name        NVARCHAR(255)     NOT NULL,
-        contact_title       NVARCHAR(100)     NOT NULL,
-        phone               NVARCHAR(50)      NOT NULL,
-        fax                 NVARCHAR(50)      NOT NULL,
-
-        dwh_inserted_at     DATETIME2(3)      NOT NULL
-            CONSTRAINT df_dim_customer_dwh_inserted_at
-            DEFAULT (SYSUTCDATETIME()),
-
-        CONSTRAINT pk_dim_customer
-            PRIMARY KEY (customer_key),
-
-        CONSTRAINT uq_dim_customer_customer_id
-            UNIQUE (customer_id)
-    );
-END;
+DROP TABLE IF EXISTS sale.fact_order;
+DROP TABLE IF EXISTS sale.dim_shipper;
+DROP TABLE IF EXISTS sale.dim_product;
+DROP TABLE IF EXISTS sale.dim_supplier;
+DROP TABLE IF EXISTS sale.dim_employee;
+DROP TABLE IF EXISTS sale.dim_customer;
+DROP TABLE IF EXISTS sale.dim_geography;
 GO
 
 
 -----------------------------------------------------------------------------------------
--- 4. Create Employee Dimension
+-- 5. Create Geography Dimension
 -----------------------------------------------------------------------------------------
 
-IF OBJECT_ID(N'sale.dim_employee', N'U') IS NULL
-BEGIN
-    CREATE TABLE sale.dim_employee
-    (
-        employee_key            INT IDENTITY(1,1) NOT NULL,
-        employee_id             INT               NOT NULL,
-        first_name              NVARCHAR(100)     NOT NULL,
-        last_name               NVARCHAR(100)     NOT NULL,
-        full_name               NVARCHAR(250)     NOT NULL,
-        title                   NVARCHAR(100)     NOT NULL,
-        title_of_courtesy       NVARCHAR(50)      NOT NULL,
-        birth_date              DATE              NULL,
-        hire_date               DATE              NULL,
-        reports_to_employee_id  INT               NULL,
+CREATE TABLE sale.dim_geography
+(
+    geography_key       INT IDENTITY(1,1) NOT NULL,
+    country             NVARCHAR(100)     NOT NULL,
+    region              NVARCHAR(100)     NOT NULL,
+    city                NVARCHAR(100)     NOT NULL,
+    postal_code         NVARCHAR(30)      NOT NULL,
 
-        dwh_inserted_at         DATETIME2(3)      NOT NULL
-            CONSTRAINT df_dim_employee_dwh_inserted_at
-            DEFAULT (SYSUTCDATETIME()),
+    dwh_inserted_at     DATETIME2(3)      NOT NULL
+        CONSTRAINT df_dim_geography_dwh_inserted_at
+        DEFAULT (SYSUTCDATETIME()),
 
-        CONSTRAINT pk_dim_employee
-            PRIMARY KEY (employee_key),
+    CONSTRAINT pk_dim_geography
+        PRIMARY KEY (geography_key),
 
-        CONSTRAINT uq_dim_employee_employee_id
-            UNIQUE (employee_id)
-    );
-END;
+    CONSTRAINT uq_dim_geography_location
+        UNIQUE (country, region, city, postal_code)
+);
 GO
 
 
 -----------------------------------------------------------------------------------------
--- 5. Create Supplier Dimension
+-- 6. Create Customer Dimension
 -----------------------------------------------------------------------------------------
 
-IF OBJECT_ID(N'sale.dim_supplier', N'U') IS NULL
-BEGIN
-    CREATE TABLE sale.dim_supplier
-    (
-        supplier_key        INT IDENTITY(1,1) NOT NULL,
-        supplier_id         INT               NOT NULL,
-        company_name        NVARCHAR(255)     NOT NULL,
-        contact_name        NVARCHAR(255)     NOT NULL,
-        contact_title       NVARCHAR(100)     NOT NULL,
-        phone               NVARCHAR(50)      NOT NULL,
-        home_page           NVARCHAR(MAX)     NOT NULL,
+CREATE TABLE sale.dim_customer
+(
+    customer_key        INT IDENTITY(1,1) NOT NULL,
+    customer_id         VARCHAR(20)       NOT NULL,
+    company_name        NVARCHAR(255)     NOT NULL,
+    contact_name        NVARCHAR(255)     NOT NULL,
+    contact_title       NVARCHAR(100)     NOT NULL,
+    phone               NVARCHAR(50)      NOT NULL,
+    fax                 NVARCHAR(50)      NOT NULL,
 
-        dwh_inserted_at     DATETIME2(3)      NOT NULL
-            CONSTRAINT df_dim_supplier_dwh_inserted_at
-            DEFAULT (SYSUTCDATETIME()),
+    geography_key       INT               NOT NULL,
 
-        CONSTRAINT pk_dim_supplier
-            PRIMARY KEY (supplier_key),
+    dwh_inserted_at     DATETIME2(3)      NOT NULL
+        CONSTRAINT df_dim_customer_dwh_inserted_at
+        DEFAULT (SYSUTCDATETIME()),
 
-        CONSTRAINT uq_dim_supplier_supplier_id
-            UNIQUE (supplier_id)
-    );
-END;
+    CONSTRAINT pk_dim_customer
+        PRIMARY KEY (customer_key),
+
+    CONSTRAINT uq_dim_customer_customer_id
+        UNIQUE (customer_id),
+
+    CONSTRAINT fk_dim_customer_geography
+        FOREIGN KEY (geography_key)
+        REFERENCES sale.dim_geography(geography_key)
+);
 GO
 
 
 -----------------------------------------------------------------------------------------
--- 6. Create Product Dimension
+-- 7. Create Employee Dimension
 -----------------------------------------------------------------------------------------
 
--- Category is denormalized into the Product Dimension.
--- Therefore, no separate dim_category table is created.
+CREATE TABLE sale.dim_employee
+(
+    employee_key            INT IDENTITY(1,1) NOT NULL,
+    employee_id             INT               NOT NULL,
+    first_name              NVARCHAR(100)     NOT NULL,
+    last_name               NVARCHAR(100)     NOT NULL,
+    full_name               NVARCHAR(250)     NOT NULL,
+    title                   NVARCHAR(100)     NOT NULL,
+    title_of_courtesy       NVARCHAR(50)      NOT NULL,
+    birth_date              DATE              NULL,
+    hire_date               DATE              NULL,
+    reports_to_employee_id  INT               NULL,
 
-IF OBJECT_ID(N'sale.dim_product', N'U') IS NULL
-BEGIN
-    CREATE TABLE sale.dim_product
-    (
-        product_key             INT IDENTITY(1,1) NOT NULL,
-        product_id              INT               NOT NULL,
-        product_name            NVARCHAR(255)     NOT NULL,
+    geography_key           INT               NOT NULL,
 
-        -- Supplier Business Key
-        supplier_id             INT               NULL,
+    dwh_inserted_at         DATETIME2(3)      NOT NULL
+        CONSTRAINT df_dim_employee_dwh_inserted_at
+        DEFAULT (SYSUTCDATETIME()),
 
-        -- Denormalized Category Attributes
-        category_id             INT               NULL,
-        category_name           NVARCHAR(100)     NOT NULL,
-        category_desc           NVARCHAR(MAX)     NOT NULL,
+    CONSTRAINT pk_dim_employee
+        PRIMARY KEY (employee_key),
 
-        -- Product Packaging Attributes
-        quantity_per_unit       NVARCHAR(100)     NOT NULL,
-        package_quantity        INT               NULL,
-        package_unit            NVARCHAR(100)     NOT NULL,
+    CONSTRAINT uq_dim_employee_employee_id
+        UNIQUE (employee_id),
 
-        -- Product Inventory / Status Attributes
-        current_unit_price      DECIMAL(19,4)     NOT NULL,
-        units_in_stock          INT               NOT NULL,
-        units_on_order          INT               NOT NULL,
-        reorder_level           INT               NOT NULL,
-        discontinued_status     VARCHAR(20)       NOT NULL,
-
-        dwh_inserted_at         DATETIME2(3)      NOT NULL
-            CONSTRAINT df_dim_product_dwh_inserted_at
-            DEFAULT (SYSUTCDATETIME()),
-
-        CONSTRAINT pk_dim_product
-            PRIMARY KEY (product_key),
-
-        CONSTRAINT uq_dim_product_product_id
-            UNIQUE (product_id)
-    );
-END;
+    CONSTRAINT fk_dim_employee_geography
+        FOREIGN KEY (geography_key)
+        REFERENCES sale.dim_geography(geography_key)
+);
 GO
 
 
 -----------------------------------------------------------------------------------------
--- 7. Create Shipper Dimension
+-- 8. Create Supplier Dimension
 -----------------------------------------------------------------------------------------
 
-IF OBJECT_ID(N'sale.dim_shipper', N'U') IS NULL
-BEGIN
-    CREATE TABLE sale.dim_shipper
-    (
-        shipper_key         INT IDENTITY(1,1) NOT NULL,
-        shipper_id          INT               NOT NULL,
-        company_name        NVARCHAR(255)     NOT NULL,
-        phone               NVARCHAR(50)      NOT NULL,
+CREATE TABLE sale.dim_supplier
+(
+    supplier_key        INT IDENTITY(1,1) NOT NULL,
+    supplier_id         INT               NOT NULL,
+    company_name        NVARCHAR(255)     NOT NULL,
+    contact_name        NVARCHAR(255)     NOT NULL,
+    contact_title       NVARCHAR(100)     NOT NULL,
+    phone               NVARCHAR(50)      NOT NULL,
+    home_page           NVARCHAR(MAX)     NOT NULL,
 
-        dwh_inserted_at     DATETIME2(3)      NOT NULL
-            CONSTRAINT df_dim_shipper_dwh_inserted_at
-            DEFAULT (SYSUTCDATETIME()),
+    geography_key       INT               NOT NULL,
 
-        CONSTRAINT pk_dim_shipper
-            PRIMARY KEY (shipper_key),
+    dwh_inserted_at     DATETIME2(3)      NOT NULL
+        CONSTRAINT df_dim_supplier_dwh_inserted_at
+        DEFAULT (SYSUTCDATETIME()),
 
-        CONSTRAINT uq_dim_shipper_shipper_id
-            UNIQUE (shipper_id)
-    );
-END;
+    CONSTRAINT pk_dim_supplier
+        PRIMARY KEY (supplier_key),
+
+    CONSTRAINT uq_dim_supplier_supplier_id
+        UNIQUE (supplier_id),
+
+    CONSTRAINT fk_dim_supplier_geography
+        FOREIGN KEY (geography_key)
+        REFERENCES sale.dim_geography(geography_key)
+);
 GO
 
 
 -----------------------------------------------------------------------------------------
--- 8. Create Geography Dimension
+-- 9. Create Product Dimension
+--
+-- Category is denormalized in this Dimension.
+-- There is intentionally no independent dim_category table.
 -----------------------------------------------------------------------------------------
 
--- Geography is integrated from:
--- Customers, Employees, Suppliers, and Order Shipping Address.
+CREATE TABLE sale.dim_product
+(
+    product_key             INT IDENTITY(1,1) NOT NULL,
+    product_id              INT               NOT NULL,
+    product_name            NVARCHAR(255)     NOT NULL,
 
-IF OBJECT_ID(N'sale.dim_geography', N'U') IS NULL
-BEGIN
-    CREATE TABLE sale.dim_geography
-    (
-        geography_key       INT IDENTITY(1,1) NOT NULL,
-        country             NVARCHAR(100)     NOT NULL,
-        region              NVARCHAR(100)     NOT NULL,
-        city                NVARCHAR(100)     NOT NULL,
-        postal_code         NVARCHAR(30)      NOT NULL,
+    -- Supplier Business Key retained for lineage and analytical use.
+    supplier_id             INT               NULL,
 
-        dwh_inserted_at     DATETIME2(3)      NOT NULL
-            CONSTRAINT df_dim_geography_dwh_inserted_at
-            DEFAULT (SYSUTCDATETIME()),
+    -- Denormalized Category Attributes
+    category_id             INT               NULL,
+    category_name           NVARCHAR(100)     NOT NULL,
+    category_desc           NVARCHAR(MAX)     NOT NULL,
 
-        CONSTRAINT pk_dim_geography
-            PRIMARY KEY (geography_key),
+    -- Product Packaging Attributes
+    quantity_per_unit       NVARCHAR(100)     NOT NULL,
+    package_quantity        INT               NULL,
+    package_unit            NVARCHAR(100)     NOT NULL,
 
-        CONSTRAINT uq_dim_geography_location
-            UNIQUE (country, region, city, postal_code)
-    );
-END;
+    -- Product Inventory / Status Attributes
+    current_unit_price      DECIMAL(19,4)     NOT NULL,
+    units_in_stock          INT               NOT NULL,
+    units_on_order          INT               NOT NULL,
+    reorder_level           INT               NOT NULL,
+    discontinued_status     VARCHAR(20)       NOT NULL,
+
+    dwh_inserted_at         DATETIME2(3)      NOT NULL
+        CONSTRAINT df_dim_product_dwh_inserted_at
+        DEFAULT (SYSUTCDATETIME()),
+
+    CONSTRAINT pk_dim_product
+        PRIMARY KEY (product_key),
+
+    CONSTRAINT uq_dim_product_product_id
+        UNIQUE (product_id)
+);
 GO
 
 
 -----------------------------------------------------------------------------------------
--- 9. Create Order Fact
+-- 10. Create Shipper Dimension
 -----------------------------------------------------------------------------------------
 
+CREATE TABLE sale.dim_shipper
+(
+    shipper_key         INT IDENTITY(1,1) NOT NULL,
+    shipper_id          INT               NOT NULL,
+    company_name        NVARCHAR(255)     NOT NULL,
+    phone               NVARCHAR(50)      NOT NULL,
+
+    dwh_inserted_at     DATETIME2(3)      NOT NULL
+        CONSTRAINT df_dim_shipper_dwh_inserted_at
+        DEFAULT (SYSUTCDATETIME()),
+
+    CONSTRAINT pk_dim_shipper
+        PRIMARY KEY (shipper_key),
+
+    CONSTRAINT uq_dim_shipper_shipper_id
+        UNIQUE (shipper_id)
+);
+GO
+
+
+-----------------------------------------------------------------------------------------
+-- 11. Create Order Fact
+--
 -- Fact Grain:
 -- One record per Order ID + Product ID.
 --
--- order_id is a Degenerate Dimension because
--- there is no separate Order Dimension.
+-- order_id is a Degenerate Dimension because there is no separate Order Dimension.
+-----------------------------------------------------------------------------------------
 
-IF OBJECT_ID(N'sale.fact_order', N'U') IS NULL
-BEGIN
-    CREATE TABLE sale.fact_order
-    (
-        order_fact_key          BIGINT IDENTITY(1,1) NOT NULL,
+CREATE TABLE sale.fact_order
+(
+    order_fact_key          BIGINT IDENTITY(1,1) NOT NULL,
 
-        -- Business / Degenerate Keys
-        order_id                INT                   NOT NULL,
-        source_product_id       INT                   NOT NULL,
+    -- Business / Degenerate Keys
+    order_id                INT                   NOT NULL,
+    source_product_id       INT                   NOT NULL,
 
-        -- Dimension Surrogate Keys
-        customer_key            INT                   NOT NULL,
-        employee_key            INT                   NOT NULL,
-        supplier_key            INT                   NOT NULL,
-        product_key             INT                   NOT NULL,
-        shipper_key             INT                   NOT NULL,
-        geography_key           INT                   NOT NULL,
+    -- Dimension Surrogate Keys
+    customer_key            INT                   NOT NULL,
+    employee_key            INT                   NOT NULL,
+    supplier_key            INT                   NOT NULL,
+    product_key             INT                   NOT NULL,
+    shipper_key             INT                   NOT NULL,
+    geography_key           INT                   NOT NULL,
 
-        /*
+    /*
         Date keys originate from the shared DimDate table:
         [Northwind_dw].[dbo].[DimDate].[MiladiDateKey]
 
         SQL Server does not allow Cross-Database Foreign Keys.
-        Therefore, these columns do not have FK constraints.
-        */
+        Therefore these columns do not have FK constraints.
+    */
+    order_date_key          INT                   NOT NULL,
+    required_date_key       INT                   NOT NULL,
+    shipped_date_key        INT                   NOT NULL,
 
-        order_date_key          INT                   NOT NULL,
-        required_date_key       INT                   NOT NULL,
-        shipped_date_key        INT                   NOT NULL,
+    -- Transaction Measures
+    unit_price              DECIMAL(19,4)         NOT NULL,
+    quantity                INT                   NOT NULL,
+    discount_rate           DECIMAL(9,6)          NOT NULL,
 
-        -- Transaction Measures
-        unit_price              DECIMAL(19,4)         NOT NULL,
-        quantity                INT                   NOT NULL,
-        discount_rate           DECIMAL(9,6)          NOT NULL,
+    -- Derived Measures
+    gross_amount            DECIMAL(19,4)         NOT NULL,
+    discount_amount         DECIMAL(19,4)         NOT NULL,
+    net_amount              DECIMAL(19,4)         NOT NULL,
+    freight_amount          DECIMAL(19,4)         NOT NULL,
 
-        -- Derived Measures
-        gross_amount            DECIMAL(19,4)         NOT NULL,
-        discount_amount         DECIMAL(19,4)         NOT NULL,
-        net_amount              DECIMAL(19,4)         NOT NULL,
-        freight_amount          DECIMAL(19,4)         NOT NULL,
+    dwh_inserted_at         DATETIME2(3)          NOT NULL
+        CONSTRAINT df_fact_order_dwh_inserted_at
+        DEFAULT (SYSUTCDATETIME()),
 
-        dwh_inserted_at         DATETIME2(3)          NOT NULL
-            CONSTRAINT df_fact_order_dwh_inserted_at
-            DEFAULT (SYSUTCDATETIME()),
+    CONSTRAINT pk_fact_order
+        PRIMARY KEY (order_fact_key),
 
-        CONSTRAINT pk_fact_order
-            PRIMARY KEY (order_fact_key),
+    -- Prevents duplicate records at Fact Grain.
+    CONSTRAINT uq_fact_order_business_key
+        UNIQUE (order_id, source_product_id),
 
-        -- Prevent duplicate records at Fact Grain
-        CONSTRAINT uq_fact_order_business_key
-            UNIQUE (order_id, source_product_id),
+    CONSTRAINT fk_fact_order_customer
+        FOREIGN KEY (customer_key)
+        REFERENCES sale.dim_customer(customer_key),
 
-        CONSTRAINT fk_fact_order_customer
-            FOREIGN KEY (customer_key)
-            REFERENCES sale.dim_customer(customer_key),
+    CONSTRAINT fk_fact_order_employee
+        FOREIGN KEY (employee_key)
+        REFERENCES sale.dim_employee(employee_key),
 
-        CONSTRAINT fk_fact_order_employee
-            FOREIGN KEY (employee_key)
-            REFERENCES sale.dim_employee(employee_key),
+    CONSTRAINT fk_fact_order_supplier
+        FOREIGN KEY (supplier_key)
+        REFERENCES sale.dim_supplier(supplier_key),
 
-        CONSTRAINT fk_fact_order_supplier
-            FOREIGN KEY (supplier_key)
-            REFERENCES sale.dim_supplier(supplier_key),
+    CONSTRAINT fk_fact_order_product
+        FOREIGN KEY (product_key)
+        REFERENCES sale.dim_product(product_key),
 
-        CONSTRAINT fk_fact_order_product
-            FOREIGN KEY (product_key)
-            REFERENCES sale.dim_product(product_key),
+    CONSTRAINT fk_fact_order_shipper
+        FOREIGN KEY (shipper_key)
+        REFERENCES sale.dim_shipper(shipper_key),
 
-        CONSTRAINT fk_fact_order_shipper
-            FOREIGN KEY (shipper_key)
-            REFERENCES sale.dim_shipper(shipper_key),
-
-        CONSTRAINT fk_fact_order_geography
-            FOREIGN KEY (geography_key)
-            REFERENCES sale.dim_geography(geography_key)
-    );
-END;
+    CONSTRAINT fk_fact_order_geography
+        FOREIGN KEY (geography_key)
+        REFERENCES sale.dim_geography(geography_key)
+);
 GO
 
 
 -----------------------------------------------------------------------------------------
--- 10. Insert Unknown Members
+-- 12. Insert Unknown Members
+--
+-- Geography MUST be inserted first because Customer, Employee, Supplier,
+-- and Fact reference geography_key = 0 through Foreign Keys.
 -----------------------------------------------------------------------------------------
 
--- Unknown Members use surrogate key = 0.
--- They prevent Fact Load failures when source data is missing
--- or does not match a Dimension record.
-
 
 -----------------------------------------------------------------------------------------
--- 10.1 Unknown Customer
+-- 12.1 Unknown Geography
 -----------------------------------------------------------------------------------------
 
-IF NOT EXISTS
+SET IDENTITY_INSERT sale.dim_geography ON;
+
+INSERT INTO sale.dim_geography
 (
-    SELECT 1
-    FROM sale.dim_customer
-    WHERE customer_key = 0
+    geography_key,
+    country,
+    region,
+    city,
+    postal_code
 )
-BEGIN
-    SET IDENTITY_INSERT sale.dim_customer ON;
+VALUES
+(
+    0,
+    N'UNKNOWN',
+    N'UNKNOWN',
+    N'UNKNOWN',
+    N'UNKNOWN'
+);
 
-    INSERT INTO sale.dim_customer
-    (
-        customer_key,
-        customer_id,
-        company_name,
-        contact_name,
-        contact_title,
-        phone,
-        fax
-    )
-    VALUES
-    (
-        0,
-        'UNKNOWN',
-        N'Unknown Customer',
-        N'Unknown',
-        N'Unknown',
-        N'Unknown',
-        N'Not Available'
-    );
-
-    SET IDENTITY_INSERT sale.dim_customer OFF;
-END;
+SET IDENTITY_INSERT sale.dim_geography OFF;
 GO
 
 
 -----------------------------------------------------------------------------------------
--- 10.2 Unknown Employee
+-- 12.2 Unknown Customer
 -----------------------------------------------------------------------------------------
 
-IF NOT EXISTS
+SET IDENTITY_INSERT sale.dim_customer ON;
+
+INSERT INTO sale.dim_customer
 (
-    SELECT 1
-    FROM sale.dim_employee
-    WHERE employee_key = 0
+    customer_key,
+    customer_id,
+    company_name,
+    contact_name,
+    contact_title,
+    phone,
+    fax,
+    geography_key
 )
-BEGIN
-    SET IDENTITY_INSERT sale.dim_employee ON;
+VALUES
+(
+    0,
+    'UNKNOWN',
+    N'Unknown Customer',
+    N'Unknown',
+    N'Unknown',
+    N'Unknown',
+    N'Not Available',
+    0
+);
 
-    INSERT INTO sale.dim_employee
-    (
-        employee_key,
-        employee_id,
-        first_name,
-        last_name,
-        full_name,
-        title,
-        title_of_courtesy,
-        birth_date,
-        hire_date,
-        reports_to_employee_id
-    )
-    VALUES
-    (
-        0,
-        0,
-        N'Unknown',
-        N'Unknown',
-        N'Unknown Employee',
-        N'Unknown',
-        N'Unknown',
-        NULL,
-        NULL,
-        NULL
-    );
-
-    SET IDENTITY_INSERT sale.dim_employee OFF;
-END;
+SET IDENTITY_INSERT sale.dim_customer OFF;
 GO
 
 
 -----------------------------------------------------------------------------------------
--- 10.3 Unknown Supplier
+-- 12.3 Unknown Employee
 -----------------------------------------------------------------------------------------
 
-IF NOT EXISTS
+SET IDENTITY_INSERT sale.dim_employee ON;
+
+INSERT INTO sale.dim_employee
 (
-    SELECT 1
-    FROM sale.dim_supplier
-    WHERE supplier_key = 0
+    employee_key,
+    employee_id,
+    first_name,
+    last_name,
+    full_name,
+    title,
+    title_of_courtesy,
+    birth_date,
+    hire_date,
+    reports_to_employee_id,
+    geography_key
 )
-BEGIN
-    SET IDENTITY_INSERT sale.dim_supplier ON;
+VALUES
+(
+    0,
+    0,
+    N'Unknown',
+    N'Unknown',
+    N'Unknown Employee',
+    N'Unknown',
+    N'Unknown',
+    NULL,
+    NULL,
+    NULL,
+    0
+);
 
-    INSERT INTO sale.dim_supplier
-    (
-        supplier_key,
-        supplier_id,
-        company_name,
-        contact_name,
-        contact_title,
-        phone,
-        home_page
-    )
-    VALUES
-    (
-        0,
-        0,
-        N'Unknown Supplier',
-        N'Unknown',
-        N'Unknown',
-        N'Unknown',
-        N'Not Available'
-    );
-
-    SET IDENTITY_INSERT sale.dim_supplier OFF;
-END;
+SET IDENTITY_INSERT sale.dim_employee OFF;
 GO
 
 
 -----------------------------------------------------------------------------------------
--- 10.4 Unknown Product
+-- 12.4 Unknown Supplier
 -----------------------------------------------------------------------------------------
 
-IF NOT EXISTS
+SET IDENTITY_INSERT sale.dim_supplier ON;
+
+INSERT INTO sale.dim_supplier
 (
-    SELECT 1
-    FROM sale.dim_product
-    WHERE product_key = 0
+    supplier_key,
+    supplier_id,
+    company_name,
+    contact_name,
+    contact_title,
+    phone,
+    home_page,
+    geography_key
 )
-BEGIN
-    SET IDENTITY_INSERT sale.dim_product ON;
+VALUES
+(
+    0,
+    0,
+    N'Unknown Supplier',
+    N'Unknown',
+    N'Unknown',
+    N'Unknown',
+    N'Not Available',
+    0
+);
 
-    INSERT INTO sale.dim_product
-    (
-        product_key,
-        product_id,
-        product_name,
-        supplier_id,
-        category_id,
-        category_name,
-        category_desc,
-        quantity_per_unit,
-        package_quantity,
-        package_unit,
-        current_unit_price,
-        units_in_stock,
-        units_on_order,
-        reorder_level,
-        discontinued_status
-    )
-    VALUES
-    (
-        0,
-        0,
-        N'Unknown Product',
-        NULL,
-        NULL,
-        N'Unknown Category',
-        N'Not Available',
-        N'Unknown',
-        NULL,
-        N'Unknown',
-        0,
-        0,
-        0,
-        0,
-        'UNKNOWN'
-    );
-
-    SET IDENTITY_INSERT sale.dim_product OFF;
-END;
+SET IDENTITY_INSERT sale.dim_supplier OFF;
 GO
 
 
 -----------------------------------------------------------------------------------------
--- 10.5 Unknown Shipper
+-- 12.5 Unknown Product
 -----------------------------------------------------------------------------------------
 
-IF NOT EXISTS
+SET IDENTITY_INSERT sale.dim_product ON;
+
+INSERT INTO sale.dim_product
 (
-    SELECT 1
-    FROM sale.dim_shipper
-    WHERE shipper_key = 0
+    product_key,
+    product_id,
+    product_name,
+    supplier_id,
+    category_id,
+    category_name,
+    category_desc,
+    quantity_per_unit,
+    package_quantity,
+    package_unit,
+    current_unit_price,
+    units_in_stock,
+    units_on_order,
+    reorder_level,
+    discontinued_status
 )
-BEGIN
-    SET IDENTITY_INSERT sale.dim_shipper ON;
+VALUES
+(
+    0,
+    0,
+    N'Unknown Product',
+    NULL,
+    NULL,
+    N'Unknown Category',
+    N'Not Available',
+    N'Unknown',
+    NULL,
+    N'Unknown',
+    0,
+    0,
+    0,
+    0,
+    'UNKNOWN'
+);
 
-    INSERT INTO sale.dim_shipper
-    (
-        shipper_key,
-        shipper_id,
-        company_name,
-        phone
-    )
-    VALUES
-    (
-        0,
-        0,
-        N'Unknown Shipper',
-        N'Unknown'
-    );
-
-    SET IDENTITY_INSERT sale.dim_shipper OFF;
-END;
+SET IDENTITY_INSERT sale.dim_product OFF;
 GO
 
 
 -----------------------------------------------------------------------------------------
--- 10.6 Unknown Geography
+-- 12.6 Unknown Shipper
 -----------------------------------------------------------------------------------------
 
-IF NOT EXISTS
+SET IDENTITY_INSERT sale.dim_shipper ON;
+
+INSERT INTO sale.dim_shipper
 (
-    SELECT 1
-    FROM sale.dim_geography
-    WHERE geography_key = 0
+    shipper_key,
+    shipper_id,
+    company_name,
+    phone
 )
-BEGIN
-    SET IDENTITY_INSERT sale.dim_geography ON;
+VALUES
+(
+    0,
+    0,
+    N'Unknown Shipper',
+    N'Unknown'
+);
 
-    INSERT INTO sale.dim_geography
-    (
-        geography_key,
-        country,
-        region,
-        city,
-        postal_code
-    )
-    VALUES
-    (
-        0,
-        N'UNKNOWN',
-        N'UNKNOWN',
-        N'UNKNOWN',
-        N'UNKNOWN'
-    );
-
-    SET IDENTITY_INSERT sale.dim_geography OFF;
-END;
+SET IDENTITY_INSERT sale.dim_shipper OFF;
 GO
